@@ -1,14 +1,117 @@
 {
   "name": "mct-admin-dashboard",
   "version": "1.0.0",
-  "description": "MCT module for ADMIN-DASHBOARD",
-  "main": "dist/index.js",
+  "description": "Admin dashboard for managing MCT services.",
+  "main": "src/index.ts",
   "scripts": {
+    "start": "ts-node src/index.ts",
     "build": "tsc",
-    "dev": "tsx watch src/index.ts",
-    "test": "jest",
-    "setup": "npm install && npx drizzle-kit push:pg"
+    "lint": "eslint . --ext .ts",
+    "test": "jest"
   },
-  "keywords": ["mct", "api", "microservice"],
-  "license": "MIT"
+  "dependencies": {
+    "express": "^4.17.1",
+    "typeorm": "^0.2.34",
+    "mysql": "^2.18.1",
+    "reflect-metadata": "^0.1.13",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^14.14.37",
+    "@types/express": "^4.17.11",
+    "ts-node": "^9.1.1",
+    "typescript": "^4.2.4",
+    "eslint": "^7.23.0",
+    "jest": "^26.6.3"
+  }
+}
+### 2. src/index.ts
+import express from 'express';
+import { createConnection } from 'typeorm';
+import { routes } from './api/routes';
+import { McpServer } from './mct/server';
+async function startServer() {
+  const app = express();
+  app.use(express.json());
+  app.use(cors());
+  await createConnection(); // Assuming ORM config is in ormconfig.json
+  app.use('/api', routes);
+  const mcpServer = new McpServer(app);
+  await mcpServer.initialize();
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
+}
+startServer().catch(err => console.error('Failed to start server:', err));
+### 3. src/api/routes.ts
+import { Router } from 'express';
+import { getUsers, addUser } from '../services/userService';
+const router = Router();
+router.get('/users', async (req, res) => {
+  const users = await getUsers();
+  res.json(users);
+});
+router.post('/users', async (req, res) => {
+  const user = await addUser(req.body);
+  res.status(201).json(user);
+});
+export { router as routes };
+### 4. src/db/schema.ts
+import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id: number;
+  @Column({ length: 100 })
+  name: string;
+  @Column()
+  role: string;
+}
+### 5. src/mct/server.ts
+import { McpServer as BaseMcpServer, registerTool } from '@modelcontextprotocol/sdk';
+import toolHandlers from './tools';
+export class McpServer {
+  private server: BaseMcpServer;
+  constructor(expressApp: Express) {
+    this.server = new BaseMcpServer(expressApp);
+    this.registerTools();
+  }
+  private registerTools() {
+    toolHandlers.forEach(tool => {
+      this.server.registerTool(tool.name, tool.handler);
+    });
+  }
+  async initialize() {
+    await this.server.start();
+  }
+}
+### 6. src/mct/tools.ts
+import { getUsers, addUser } from '../services/userService';
+const toolHandlers = [
+  {
+    name: 'getUsers',
+    handler: async (params, session) => {
+      return await getUsers();
+    }
+  },
+  {
+    name: 'addUser',
+    handler: async (params, session) => {
+      return await addUser(params);
+    }
+  }
+];
+export default toolHandlers;
+### 7. src/services/userService.ts
+import { Repository } from 'typeorm';
+import { User } from '../db/schema';
+export async function getUsers(): Promise<User[]> {
+  const userRepository: Repository<User> = getRepository(User);
+  return userRepository.find();
+}
+export async function addUser(userData: Partial<User>): Promise<User> {
+  const userRepository: Repository<User> = getRepository(User);
+  const user = userRepository.create(userData);
+  return userRepository.save(user);
 }
